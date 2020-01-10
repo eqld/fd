@@ -48,6 +48,7 @@ func main() {
 
 		select {
 		case <-ctx.Done():
+			// quit
 		case signal := <-signalC:
 			log.Printf("received system signal '%v', terminating\n", signal)
 		}
@@ -66,40 +67,30 @@ func main() {
 		}
 
 		if fileInfo.IsDir() {
-			log.Printf("processing '%s'...\n", path)
+			log.Printf("walking through '%s'\n", path)
 			return nil
 		}
 
 		// don't stuck on i/o operations
 
 		type openResultT struct {
-			file   *os.File
-			err    error
-			opened bool
+			file *os.File
+			err  error
 		}
-		openResultC := make(chan openResultT, 1)
+		openResultC := make(chan openResultT)
 
 		go func() {
 			var openResult openResultT
 			openResult.file, openResult.err = os.Open(path)
-			openResult.opened = true
-			select {
-			case openResultC <- openResult:
-			case <-ctx.Done():
-				// close openResultC if the context was cancelled
-				close(openResultC)
-			}
+			openResultC <- openResult
 		}()
 
 		var openResult openResultT
 		select {
-		case openResult = <-openResultC:
-			if !openResult.opened {
-				// openResultC was closed due to context cancellation
-				return ctx.Err()
-			}
 		case <-ctx.Done():
 			return ctx.Err()
+		case openResult = <-openResultC:
+			// proceed
 		}
 
 		file, err := openResult.file, openResult.err
@@ -136,12 +127,20 @@ func main() {
 
 	// print out the duplicates
 
+	if len(catalog) == 0 {
+		log.Println("no duplicates were found")
+		return
+	}
+
+	log.Println("printing out found duplicates")
 	for signature, paths := range catalog {
-		if len(paths) > 1 {
-			fmt.Printf("%s\t%d\n", hex.EncodeToString(signature.hash[:]), signature.size)
-			for i, path := range paths {
-				fmt.Printf("\t%d\t%s\n", i, path)
-			}
+		if len(paths) < 2 {
+			continue
+		}
+
+		fmt.Printf("%s\t%d\n", hex.EncodeToString(signature.hash[:]), signature.size)
+		for i, path := range paths {
+			fmt.Printf("\t%d\t%s\n", i, path)
 		}
 	}
 }
